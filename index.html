@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Company Radar</title>
+<style>
+  :root {
+    --paper:        #efe4cf;
+    --paper-line:   rgba(120, 96, 60, 0.08);
+    --panel:        #f6eeda;
+    --ink:          #17130e;
+    --ink-soft:     #57503f;
+    --chart-bg:     #3a3129;
+    --chart-grid:   #8a7a4e;
+    --chart-edge:   #17130e;
+    --teal:         #6fc7b4;
+    --teal-dark:    #17130e;
+    --chip-shadow:  #17130e;
+    /* categorical series slots — fixed order, validated vs #3a3129 */
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #9085e9; --s7: #e66767; --s8: #008300;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background:
+      repeating-linear-gradient(0deg, transparent 0 3px, var(--paper-line) 3px 4px),
+      var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 24px 20px 60px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  h1 {
+    font-size: 26px; text-transform: uppercase; letter-spacing: 2px;
+    background: var(--teal); padding: 8px 18px;
+    border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--chip-shadow);
+  }
+  header .sub { color: var(--ink-soft); font-size: 14px; max-width: 420px; }
+  header .actions { margin-left: auto; display: flex; gap: 8px; }
+
+  button {
+    font-family: inherit; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; font-size: 12px; cursor: pointer;
+    border: 2px solid var(--ink); background: var(--panel); color: var(--ink);
+    padding: 8px 12px; box-shadow: 3px 3px 0 var(--chip-shadow);
+    transition: transform 0.05s ease;
+  }
+  button:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--chip-shadow); }
+  button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--chip-shadow); }
+  button.primary { background: var(--teal); }
+  button.ghost { box-shadow: none; border-color: var(--ink-soft); font-weight: 600; }
+
+  .layout { display: grid; grid-template-columns: 360px 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  /* ---------- sidebar ---------- */
+  .panel {
+    background: var(--panel); border: 3px solid var(--ink);
+    box-shadow: 5px 5px 0 var(--chip-shadow); padding: 16px;
+  }
+  .panel h2 {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 2px;
+    margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .company {
+    border: 2px solid var(--ink); background: var(--paper);
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .company.hidden-series { opacity: 0.55; }
+  .company .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .swatch {
+    width: 16px; height: 16px; border: 2px solid var(--ink); flex: none;
+  }
+  .company input[type="text"] {
+    font-family: inherit; font-weight: 700; font-size: 14px;
+    text-transform: uppercase; letter-spacing: 1px;
+    border: none; border-bottom: 2px dashed var(--ink-soft);
+    background: transparent; color: var(--ink); flex: 1; min-width: 0; padding: 2px 0;
+  }
+  .company input[type="text"]:focus { outline: none; border-bottom-color: var(--ink); }
+  .mini { padding: 3px 7px; font-size: 11px; box-shadow: 2px 2px 0 var(--chip-shadow); }
+  .axis-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .axis-row .axis-name { font-size: 11px; font-weight: 600; color: var(--ink-soft); width: 118px; flex: none; letter-spacing: 0.3px; }
+  .dots { display: flex; gap: 4px; }
+  .dot {
+    width: 20px; height: 20px; border: 2px solid var(--ink); background: var(--paper);
+    cursor: pointer; padding: 0; box-shadow: none; border-radius: 50%;
+  }
+  .dot:hover { transform: none; box-shadow: none; background: #ddd0b4; }
+  .dot:active { transform: none; box-shadow: none; }
+  .dot.on { background: var(--ink); }
+  .dot span { position: absolute; left: -9999px; }
+  .empty-note { color: var(--ink-soft); font-size: 13px; padding: 6px 0 10px; }
+
+  /* ---------- chart ---------- */
+  .chart-panel { padding: 20px; }
+  .chart-holder { position: relative; }
+  svg.radar { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 14px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .legend .item.off { opacity: 0.45; text-decoration: line-through; }
+  .legend .item { cursor: pointer; }
+
+  .tooltip {
+    position: absolute; pointer-events: none; z-index: 5; display: none;
+    background: var(--ink); color: var(--paper); font-size: 12px;
+    padding: 6px 10px; border: 2px solid var(--paper);
+    white-space: nowrap; transform: translate(-50%, calc(-100% - 12px));
+  }
+  .tooltip b { color: var(--teal); text-transform: uppercase; letter-spacing: 1px; }
+
+  /* ---------- table ---------- */
+  .table-panel { margin-top: 24px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 2px solid var(--ink); padding: 7px 12px; text-align: center; }
+  th { background: var(--teal); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; }
+  td:first-child, th:first-child { text-align: left; }
+  td.name { font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  td .cell-swatch { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--ink); margin-right: 7px; vertical-align: -1px; }
+  tbody td { font-variant-numeric: tabular-nums; background: var(--panel); }
+
+  .footnote { margin-top: 10px; color: var(--ink-soft); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Company Radar</h1>
+    <div class="sub">Rate each company 1–5 on the five criteria. Overlay them on the chart to compare.</div>
+    <div class="actions">
+      <button id="exportBtn" title="Download companies as JSON">Export</button>
+      <button id="importBtn" title="Load companies from JSON">Import</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Companies <button class="mini primary" id="addBtn">+ Add</button></h2>
+      <div id="companyList"></div>
+      <div class="empty-note" id="emptyNote">No companies yet — hit “+ Add” to create one.</div>
+    </div>
+
+    <div>
+      <div class="panel chart-panel">
+        <div class="chart-holder">
+          <svg class="radar" id="radar" viewBox="0 0 980 700" role="img" aria-label="Radar chart comparing companies"></svg>
+          <div class="tooltip" id="tooltip"></div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="panel table-panel">
+        <h2>Scores</h2>
+        <table id="scoreTable">
+          <thead><tr id="tableHead"></tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+        <div class="footnote">Business type: 1 = one-off machine builder · 5 = pure OEM. Beckhoff support: 5 = little/no existing Beckhoff support (greenfield opportunity).</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- config ---------- */
+const AXES = [
+  { key: "innovative", label: "Innovative",       short: "Innovative" },
+  { key: "volume",     label: "High Std Volume",  short: "High Standard Volume" },
+  { key: "beckhoff",   label: "Low Beckhoff\nSupport", short: "Low Beckhoff Support" },
+  { key: "biztype",    label: "Business Type\n(OEM vs 1-off)", short: "Business Type (OEM vs 1-off)" },
+  { key: "size",       label: "Company Size",     short: "Company Size" },
+];
+const MIN = 1, MAX = 5;
+// Fixed categorical order (validated against the chart surface). Color follows
+// the company via its saved slot — deleting one company never repaints another.
+const SLOTS = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#9085e9","#e66767","#008300"];
+const STORE_KEY = "company-radar-v1";
+
+/* icon paths (24x24 viewBox), drawn in paper color inside a dark circle */
+const ICONS = {
+  innovative: "M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2zM9.5 18.5h5V20a1.5 1.5 0 0 1-1.5 1.5h-2A1.5 1.5 0 0 1 9.5 20v-1.5z",
+  volume:     "M4 13h7v7H4zM13 13h7v7h-7zM8.5 4h7v7h-7z",
+  beckhoff:   "M21.7 6.7a5.5 5.5 0 0 1-7.4 6.6L7 20.6a2.1 2.1 0 0 1-3-3l7.3-7.3a5.5 5.5 0 0 1 6.6-7.4L14.6 6l.7 2.7 2.7.7 3.7-3.3z",
+  biztype:    "M3 21V9l6 3V9l6 3V4h6v17H3zM17 8h2V6h-2v2z",
+  size:       "M4 21V7h6v3h4V3h6v18h-4v-4h-2v4h-4v-4H8v4H4zM6 9v2h2V9H6zm10-4v2h2V5h-2z",
+};
+
+/* ---------- state ---------- */
+let companies = load();
+let nextSlot = () => {
+  const used = new Set(companies.map(c => c.slot));
+  for (let i = 0; i < SLOTS.length; i++) if (!used.has(i)) return i;
+  return -1;
+};
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+function save() { localStorage.setItem(STORE_KEY, JSON.stringify(companies)); }
+
+/* ---------- geometry ---------- */
+const CX = 490, CY = 360, R = 235;
+function vertex(i, r) {
+  const a = -Math.PI / 2 + i * (2 * Math.PI / AXES.length);
+  return [CX + r * Math.cos(a), CY + r * Math.sin(a)];
+}
+function ringPath(r) {
+  return AXES.map((_, i) => vertex(i, r).map(n => n.toFixed(1)).join(",")).join(" ");
+}
+function valueRadius(v) { return (v / MAX) * R; }
+
+/* ---------- rendering ---------- */
+const svg = document.getElementById("radar");
+const tooltip = document.getElementById("tooltip");
+const NS = "http://www.w3.org/2000/svg";
+
+function el(name, attrs, parent) {
+  const n = document.createElementNS(NS, name);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+function drawChart() {
+  svg.innerHTML = "";
+
+  // outer pentagon: white halo + dark plate
+  el("polygon", { points: ringPath(R + 14), fill: "none", stroke: "#f6eeda", "stroke-width": 10, "stroke-linejoin": "round" }, svg);
+  el("polygon", { points: ringPath(R + 14), fill: "var(--chart-bg)", stroke: "var(--chart-edge)", "stroke-width": 5, "stroke-linejoin": "round" }, svg);
+
+  // grid rings 1..5
+  for (let v = 1; v <= MAX; v++) {
+    el("polygon", {
+      points: ringPath(valueRadius(v)), fill: "none",
+      stroke: "var(--chart-grid)", "stroke-width": v === MAX ? 2.5 : 1.2,
+      opacity: v === MAX ? 0.9 : 0.55, "stroke-linejoin": "round",
+    }, svg);
+  }
+  // spokes
+  for (let i = 0; i < AXES.length; i++) {
+    const [x, y] = vertex(i, R);
+    el("line", { x1: CX, y1: CY, x2: x, y2: y, stroke: "var(--chart-grid)", "stroke-width": 1.2, opacity: 0.55 }, svg);
+  }
+
+  // series polygons (visible companies only)
+  const visible = companies.filter(c => !c.hidden);
+  for (const c of visible) {
+    const pts = AXES.map((a, i) => vertex(i, valueRadius(c.scores[a.key])));
+    const ptsStr = pts.map(p => p.map(n => n.toFixed(1)).join(",")).join(" ");
+    const color = SLOTS[c.slot];
+    el("polygon", { points: ptsStr, fill: color, opacity: 0.12, stroke: "none" }, svg);
+    // 2px paper-tone ring under the stroke keeps overlapping outlines separable
+    el("polygon", { points: ptsStr, fill: "none", stroke: "var(--chart-bg)", "stroke-width": 6, "stroke-linejoin": "round", opacity: 0.9 }, svg);
+    el("polygon", { points: ptsStr, fill: "none", stroke: color, "stroke-width": 2.5, "stroke-linejoin": "round" }, svg);
+    pts.forEach(([x, y], i) => {
+      el("circle", { cx: x, cy: y, r: 5, fill: color, stroke: "var(--chart-bg)", "stroke-width": 2 }, svg);
+      // oversized invisible hit target for the tooltip
+      const hit = el("circle", { cx: x, cy: y, r: 14, fill: "transparent" }, svg);
+      hit.addEventListener("mousemove", ev => showTip(ev, c, AXES[i]));
+      hit.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  // axis labels: teal chip + icon badge
+  drawAxisLabels();
+}
+
+function drawAxisLabels() {
+  const badgeR = 20;
+  for (let i = 0; i < AXES.length; i++) {
+    const a = AXES[i];
+    const angle = -Math.PI / 2 + i * (2 * Math.PI / AXES.length);
+    const [bx, by] = [CX + (R + 52) * Math.cos(angle), CY + (R + 52) * Math.sin(angle)];
+
+    // icon badge
+    el("circle", { cx: bx, cy: by, r: badgeR, fill: "var(--chart-bg)", stroke: "#f6eeda", "stroke-width": 3 }, svg);
+    const g = el("g", { transform: `translate(${bx - 12},${by - 12})` }, svg);
+    el("path", { d: ICONS[a.key], fill: "#f6eeda" }, g);
+
+    // chip position: top axis gets its chip above the badge; the rest sit
+    // horizontally beside the badge, pushed away from the pentagon
+    const lines = a.label.split("\n");
+    const chipW = Math.max(...lines.map(t => t.length)) * 9.2 + 28;
+    const chipH = lines.length * 18 + 12;
+    let tx, ty;
+    if (i === 0) {
+      tx = bx;
+      ty = by - (badgeR + 14 + chipH / 2);
+    } else {
+      tx = bx + Math.sign(Math.cos(angle)) * (badgeR + 14 + chipW / 2);
+      ty = by;
+    }
+    tx = Math.max(chipW / 2 + 6, Math.min(980 - chipW / 2 - 6, tx));
+    ty = Math.max(chipH / 2 + 6, Math.min(700 - chipH / 2 - 6, ty));
+
+    el("rect", { x: tx - chipW / 2 + 3, y: ty - chipH / 2 + 3, width: chipW, height: chipH, fill: "#17130e" }, svg);
+    el("rect", { x: tx - chipW / 2, y: ty - chipH / 2, width: chipW, height: chipH, fill: "var(--teal)", stroke: "#17130e", "stroke-width": 2.5 }, svg);
+    lines.forEach((line, li) => {
+      const t = el("text", {
+        x: tx, y: ty - chipH / 2 + 6 + 14 + li * 18, "text-anchor": "middle",
+        "font-size": 14, "font-weight": 800, "letter-spacing": 1.2, fill: "#17130e",
+        "font-family": 'system-ui, -apple-system, "Segoe UI", sans-serif',
+      }, svg);
+      t.textContent = line.toUpperCase();
+    });
+  }
+}
+
+function showTip(ev, company, axis) {
+  const holder = svg.parentElement.getBoundingClientRect();
+  tooltip.style.display = "block";
+  tooltip.style.left = (ev.clientX - holder.left) + "px";
+  tooltip.style.top = (ev.clientY - holder.top) + "px";
+  tooltip.innerHTML = `<b>${escapeHtml(company.name)}</b><br>${escapeHtml(axis.short)}: ${company.scores[axis.key]} / ${MAX}`;
+}
+function hideTip() { tooltip.style.display = "none"; }
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+/* ---------- sidebar ---------- */
+const listEl = document.getElementById("companyList");
+const emptyNote = document.getElementById("emptyNote");
+
+function drawSidebar() {
+  listEl.innerHTML = "";
+  emptyNote.style.display = companies.length ? "none" : "block";
+  for (const c of companies) {
+    const card = document.createElement("div");
+    card.className = "company" + (c.hidden ? " hidden-series" : "");
+
+    const head = document.createElement("div");
+    head.className = "head";
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = SLOTS[c.slot];
+    const nameIn = document.createElement("input");
+    nameIn.type = "text";
+    nameIn.value = c.name;
+    nameIn.addEventListener("input", () => { c.name = nameIn.value; save(); drawChart(); drawLegend(); drawTable(); });
+    const hideBtn = document.createElement("button");
+    hideBtn.className = "mini";
+    hideBtn.textContent = c.hidden ? "Show" : "Hide";
+    hideBtn.addEventListener("click", () => { c.hidden = !c.hidden; save(); render(); });
+    const delBtn = document.createElement("button");
+    delBtn.className = "mini";
+    delBtn.textContent = "✕";
+    delBtn.title = "Delete company";
+    delBtn.addEventListener("click", () => {
+      if (confirm(`Delete "${c.name}"?`)) { companies = companies.filter(x => x !== c); save(); render(); }
+    });
+    head.append(sw, nameIn, hideBtn, delBtn);
+    card.appendChild(head);
+
+    for (const a of AXES) {
+      const row = document.createElement("div");
+      row.className = "axis-row";
+      const nm = document.createElement("span");
+      nm.className = "axis-name";
+      nm.textContent = a.short;
+      const dots = document.createElement("div");
+      dots.className = "dots";
+      dots.setAttribute("role", "radiogroup");
+      dots.setAttribute("aria-label", `${c.name} — ${a.short}`);
+      for (let v = MIN; v <= MAX; v++) {
+        const d = document.createElement("button");
+        d.className = "dot" + (v <= c.scores[a.key] ? " on" : "");
+        d.title = `${v}`;
+        d.innerHTML = `<span>${v}</span>`;
+        d.addEventListener("click", () => { c.scores[a.key] = v; save(); render(); });
+        dots.appendChild(d);
+      }
+      row.append(nm, dots);
+      card.appendChild(row);
+    }
+    listEl.appendChild(card);
+  }
+}
+
+/* ---------- legend & table ---------- */
+function drawLegend() {
+  const lg = document.getElementById("legend");
+  lg.innerHTML = "";
+  for (const c of companies) {
+    const item = document.createElement("div");
+    item.className = "item" + (c.hidden ? " off" : "");
+    item.title = "Click to toggle";
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = SLOTS[c.slot];
+    const label = document.createElement("span");
+    label.textContent = c.name || "(unnamed)";
+    item.append(sw, label);
+    item.addEventListener("click", () => { c.hidden = !c.hidden; save(); render(); });
+    lg.appendChild(item);
+  }
+}
+
+function drawTable() {
+  const head = document.getElementById("tableHead");
+  const body = document.getElementById("tableBody");
+  head.innerHTML = "<th>Company</th>" + AXES.map(a => `<th>${escapeHtml(a.short)}</th>`).join("");
+  body.innerHTML = companies.map(c =>
+    `<tr><td class="name"><span class="cell-swatch" style="background:${SLOTS[c.slot]}"></span>${escapeHtml(c.name || "(unnamed)")}</td>` +
+    AXES.map(a => `<td>${c.scores[a.key]}</td>`).join("") + "</tr>"
+  ).join("");
+}
+
+/* ---------- actions ---------- */
+document.getElementById("addBtn").addEventListener("click", () => {
+  const slot = nextSlot();
+  if (slot === -1) { alert("Max 8 companies — the palette only has 8 distinguishable colors. Delete one first."); return; }
+  const scores = {};
+  AXES.forEach(a => scores[a.key] = 3);
+  companies.push({ name: `Company ${companies.length + 1}`, slot, hidden: false, scores });
+  save(); render();
+});
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(companies, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "company-radar.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change", ev => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!Array.isArray(data)) throw new Error("not an array");
+      companies = data.slice(0, SLOTS.length).map((c, i) => ({
+        name: String(c.name ?? `Company ${i + 1}`),
+        slot: Number.isInteger(c.slot) && c.slot >= 0 && c.slot < SLOTS.length ? c.slot : i,
+        hidden: !!c.hidden,
+        scores: Object.fromEntries(AXES.map(a => {
+          const v = Math.round(Number(c.scores?.[a.key]));
+          return [a.key, v >= MIN && v <= MAX ? v : 3];
+        })),
+      }));
+      // de-dupe slots if the file had collisions
+      const seen = new Set();
+      companies.forEach(c => {
+        while (seen.has(c.slot)) c.slot = (c.slot + 1) % SLOTS.length;
+        seen.add(c.slot);
+      });
+      save(); render();
+    } catch (e) { alert("Could not read that file — expected JSON exported from this app."); }
+  };
+  reader.readAsText(file);
+  ev.target.value = "";
+});
+
+function render() { drawChart(); drawSidebar(); drawLegend(); drawTable(); }
+
+/* seed with an example on first run so the chart isn't blank */
+if (companies.length === 0 && !localStorage.getItem(STORE_KEY)) {
+  companies = [{
+    name: "Example Co", slot: 0, hidden: false,
+    scores: { innovative: 4, volume: 3, beckhoff: 5, biztype: 2, size: 3 },
+  }];
+  save();
+}
+render();
+</script>
+</body>
+</html>
