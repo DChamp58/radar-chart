@@ -85,15 +85,13 @@
   .mini { padding: 3px 7px; font-size: 11px; box-shadow: 2px 2px 0 var(--chip-shadow); }
   .axis-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
   .axis-row .axis-name { font-size: 11px; font-weight: 600; color: var(--ink-soft); width: 118px; flex: none; letter-spacing: 0.3px; }
-  .dots { display: flex; gap: 4px; }
-  .dot {
-    width: 20px; height: 20px; border: 2px solid var(--ink); background: var(--paper);
-    cursor: pointer; padding: 0; box-shadow: none; border-radius: 50%;
+  .axis-row input[type="number"] {
+    font-family: inherit; font-weight: 700; font-size: 14px;
+    width: 58px; padding: 4px 6px; text-align: center;
+    border: 2px solid var(--ink); background: var(--paper); color: var(--ink);
+    font-variant-numeric: tabular-nums;
   }
-  .dot:hover { transform: none; box-shadow: none; background: #ddd0b4; }
-  .dot:active { transform: none; box-shadow: none; }
-  .dot.on { background: var(--ink); }
-  .dot span { position: absolute; left: -9999px; }
+  .axis-row input[type="number"]:focus { outline: none; background: #ffffff; }
   .empty-note { color: var(--ink-soft); font-size: 13px; padding: 6px 0 10px; }
 
   /* ---------- chart ---------- */
@@ -104,6 +102,7 @@
   .legend .item { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
   .legend .item.off { opacity: 0.45; text-decoration: line-through; }
   .legend .item { cursor: pointer; }
+  .legend .pct { color: var(--ink-soft); font-weight: 600; font-variant-numeric: tabular-nums; }
 
   .tooltip {
     position: absolute; pointer-events: none; z-index: 5; display: none;
@@ -130,7 +129,7 @@
 <div class="wrap">
   <header>
     <h1>Company Radar</h1>
-    <div class="sub">Rate each company 1–5 on the five criteria. Overlay them on the chart to compare.</div>
+    <div class="sub">Rate each company 0–5 on the five criteria. Overlay them on the chart to compare.</div>
     <div class="actions">
       <button id="exportBtn" title="Download companies as JSON">Export</button>
       <button id="importBtn" title="Load companies from JSON">Import</button>
@@ -177,7 +176,7 @@ const AXES = [
   { key: "biztype",    label: "Business Type\n(OEM vs 1-off)", short: "Business Type (OEM vs 1-off)" },
   { key: "size",       label: "Company Size",     short: "Company Size" },
 ];
-const MIN = 1, MAX = 5;
+const MIN = 0, MAX = 5;
 // Fixed categorical order (validated against the chart surface). Color follows
 // the company via its saved slot — deleting one company never repaints another.
 const SLOTS = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#9085e9","#e66767","#008300"];
@@ -220,6 +219,17 @@ function ringPath(r) {
   return AXES.map((_, i) => vertex(i, r).map(n => n.toFixed(1)).join(",")).join(" ");
 }
 function valueRadius(v) { return (v / MAX) * R; }
+
+// Share of the full pentagon the company's shape covers. The shape is 5
+// triangles between adjacent spokes, each with area ½·r_i·r_j·sin(72°); the
+// sin and ½ cancel against the full pentagon's, leaving Σ(v_i·v_j)/(5·MAX²).
+function areaPct(c) {
+  let sum = 0;
+  for (let i = 0; i < AXES.length; i++) {
+    sum += c.scores[AXES[i].key] * c.scores[AXES[(i + 1) % AXES.length].key];
+  }
+  return (sum / (AXES.length * MAX * MAX)) * 100;
+}
 
 /* ---------- rendering ---------- */
 const svg = document.getElementById("radar");
@@ -371,19 +381,22 @@ function drawSidebar() {
       const nm = document.createElement("span");
       nm.className = "axis-name";
       nm.textContent = a.short;
-      const dots = document.createElement("div");
-      dots.className = "dots";
-      dots.setAttribute("role", "radiogroup");
-      dots.setAttribute("aria-label", `${c.name} — ${a.short}`);
-      for (let v = MIN; v <= MAX; v++) {
-        const d = document.createElement("button");
-        d.className = "dot" + (v <= c.scores[a.key] ? " on" : "");
-        d.title = `${v}`;
-        d.innerHTML = `<span>${v}</span>`;
-        d.addEventListener("click", () => { c.scores[a.key] = v; save(); render(); });
-        dots.appendChild(d);
-      }
-      row.append(nm, dots);
+      const num = document.createElement("input");
+      num.type = "number";
+      num.min = MIN; num.max = MAX; num.step = 1;
+      num.value = c.scores[a.key];
+      num.setAttribute("aria-label", `${c.name} — ${a.short}`);
+      num.addEventListener("input", () => {
+        if (num.value === "") return; // let the user clear it while typing
+        let v = Math.round(Number(num.value));
+        if (!Number.isFinite(v)) v = MIN;
+        v = Math.max(MIN, Math.min(MAX, v));
+        if (String(v) !== num.value) num.value = v;
+        c.scores[a.key] = v;
+        save(); drawChart(); drawLegend(); drawTable();
+      });
+      num.addEventListener("blur", () => { if (num.value === "") { num.value = c.scores[a.key]; } });
+      row.append(nm, num);
       card.appendChild(row);
     }
     listEl.appendChild(card);
@@ -403,7 +416,10 @@ function drawLegend() {
     sw.style.background = SLOTS[c.slot];
     const label = document.createElement("span");
     label.textContent = c.name || "(unnamed)";
-    item.append(sw, label);
+    const pct = document.createElement("span");
+    pct.className = "pct";
+    pct.textContent = `${areaPct(c).toFixed(1)}%`;
+    item.append(sw, label, pct);
     item.addEventListener("click", () => { c.hidden = !c.hidden; save(); render(); });
     lg.appendChild(item);
   }
@@ -412,10 +428,11 @@ function drawLegend() {
 function drawTable() {
   const head = document.getElementById("tableHead");
   const body = document.getElementById("tableBody");
-  head.innerHTML = "<th>Company</th>" + AXES.map(a => `<th>${escapeHtml(a.short)}</th>`).join("");
+  head.innerHTML = "<th>Company</th>" + AXES.map(a => `<th>${escapeHtml(a.short)}</th>`).join("") + "<th>Area Covered</th>";
   body.innerHTML = companies.map(c =>
     `<tr><td class="name"><span class="cell-swatch" style="background:${SLOTS[c.slot]}"></span>${escapeHtml(c.name || "(unnamed)")}</td>` +
-    AXES.map(a => `<td>${c.scores[a.key]}</td>`).join("") + "</tr>"
+    AXES.map(a => `<td>${c.scores[a.key]}</td>`).join("") +
+    `<td><b>${areaPct(c).toFixed(1)}%</b></td></tr>`
   ).join("");
 }
 
